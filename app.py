@@ -39,18 +39,25 @@ def extract_text_from_pdf(filepath):
         return None, str(e)
     return text.strip(), None
 
+import requests as req
+
 def query_llm(prompt, max_tokens=1024):
-    """Query Hugging Face LLM via Inference API."""
+    API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": max_tokens,
+            "temperature": 0.7,
+            "return_full_text": False
+        }
+    }
     try:
-        response = client.text_generation(
-            prompt,
-            model=MODEL,
-            max_new_tokens=max_tokens,
-            temperature=0.7,
-            do_sample=True,
-            return_full_text=False,
-        )
-        return response, None
+        response = req.post(API_URL, headers=headers, json=payload)
+        result = response.json()
+        if isinstance(result, list):
+            return result[0]["generated_text"], None
+        return None, str(result)
     except Exception as e:
         return None, str(e)
 
