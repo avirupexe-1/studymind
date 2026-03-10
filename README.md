@@ -2,7 +2,7 @@
 title: StudyMind AI Study Assistant
 emoji: 📚
 colorFrom: yellow
-colorTo: orange
+colorTo: red
 sdk: docker
 pinned: false
 license: mit
