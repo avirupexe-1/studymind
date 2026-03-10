@@ -19,9 +19,7 @@ ALLOWED_EXTENSIONS = {'pdf'}
 # Initialize HuggingFace Inference Client
 # Uses HF_TOKEN env variable automatically, or falls back to free API
 HF_TOKEN = os.environ.get('HF_TOKEN', None)
-client = InferenceClient(
-    token=HF_TOKEN,
-    base_url="https://router.huggingface.co")
+client = InferenceClient(token=HF_TOKEN)
 
 # Model to use - free on HuggingFace
 MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
