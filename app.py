@@ -7,7 +7,7 @@ from werkzeug.utils import secure_filename
 import PyPDF2
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = '/tmp/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
 
