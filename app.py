@@ -4,7 +4,7 @@ import re
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from werkzeug.utils import secure_filename
 import PyPDF2
-from huggingface_hub import InferenceClient
+import requests as req
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -39,7 +39,7 @@ def extract_text_from_pdf(filepath):
         return None, str(e)
     return text.strip(), None
 
-import requests as req
+
 
 def query_llm(prompt, max_tokens=1024):
     API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3"
@@ -53,14 +53,22 @@ def query_llm(prompt, max_tokens=1024):
         }
     }
     try:
-        response = req.post(API_URL, headers=headers, json=payload)
+        response = req.post(API_URL, headers=headers, json=payload, timeout=60)
+        
+        if response.status_code == 503:
+            return None, "Model is loading, please wait 20 seconds and try again."
+        
+        if not response.text:
+            return None, "Empty response, model may be loading. Try again in 20 seconds."
+        
         result = response.json()
         if isinstance(result, list):
             return result[0]["generated_text"], None
+        if "error" in result:
+            return None, result["error"]
         return None, str(result)
     except Exception as e:
         return None, str(e)
-
 def truncate_text(text, max_chars=3000):
     """Truncate text to fit within token limits."""
     if len(text) > max_chars:
