@@ -21,7 +21,8 @@ RETRY_DELAY = 6
 # Model format: "model-id:provider"  — cerebras is free via HF token
 API_URL = "https://router.huggingface.co/v1/chat/completions"
 MODEL   = "meta-llama/Llama-3.1-8B-Instruct:cerebras"
-
+  
+  
 
 # ─── CORE AI CALLER ────────────────────────────────────────────────────────
 
