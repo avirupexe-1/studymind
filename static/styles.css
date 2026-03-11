@@ -274,7 +274,7 @@ h1 .thin {
 .btn {
   display: inline-flex; align-items: center; gap: 0.48rem;
   padding: 0.76rem 1.75rem;
-  background: rgba(255,255,255,0.24);
+  background: #5a526a33;
   border: 1px solid rgba(255,255,255,0.46);
   border-radius: 10px; cursor: pointer;
   font-family: 'Inter', sans-serif; font-size: 0.875rem; font-weight: 600;
@@ -351,7 +351,7 @@ h1 .thin {
 /* Answer option buttons */
 .opt {
   width: 100%; text-align: left; padding: 0.72rem 1rem;
-  background: rgba(255,255,255,0.22);
+  background: rgb(81 76 84 / 22%);
   border: 1px solid rgba(255,255,255,0.38);
   border-radius: 9px; cursor: pointer;
   font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 500;
@@ -510,5 +510,5 @@ footer a:hover { color: rgba(255,255,255,0.95); }
   .tab .tl    { display: none; }
   .panel      { padding: 1.4rem 1.2rem; }
   footer      { padding: 1rem 1.2rem; flex-direction: column; gap: 0.5rem; text-align: center; }
-  
+
 }
