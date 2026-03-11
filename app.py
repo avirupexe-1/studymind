@@ -12,36 +12,40 @@ UPLOAD_FOLDER = '/tmp/uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 
-HF_TOKEN    = os.environ.get('HF_TOKEN', None)
-API_URL     = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3"
-MAX_CHARS   = 3000   # max PDF text sent to model
-MAX_RETRIES = 4      # retry attempts on empty / 503 responses
-RETRY_DELAY = 8      # seconds to wait between retries
+HF_TOKEN  = os.environ.get('HF_TOKEN', None)
+MAX_CHARS = 3000
+MAX_RETRIES = 3
+RETRY_DELAY = 8
+
+# ── NEW API: Chat Completions endpoint (works as of 2025) ──────────────────
+# Uses meta-llama/Meta-Llama-3.1-8B-Instruct via HF router — free with HF token
+API_URL = "https://router.huggingface.co/novita/v1/chat/completions"
+MODEL   = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
 
 # ─── CORE AI CALLER ────────────────────────────────────────────────────────
 
-def call_mistral(prompt: str, max_new_tokens: int = 512) -> str:
+def call_llm(system_prompt: str, user_prompt: str, max_tokens: int = 512) -> str:
     """
-    Call Mistral-7B with automatic retry on:
-      - empty body          (model cold-starting on HF free tier)
-      - HTTP 503            (model still loading)
-      - JSON decode errors  (partial / malformed response)
-    Returns the generated text string.
-    Raises RuntimeError with a user-friendly message on total failure.
+    Call LLM via HF Router chat completions API.
+    Retries on 503 / empty responses (cold start).
     """
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": max_new_tokens,
-            "temperature": 0.7,
-            "do_sample": True,
-            "return_full_text": False,
-        }
+    if not HF_TOKEN:
+        raise RuntimeError("HF_TOKEN is not set. Add it in your Space secrets.")
+
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json"
     }
-    headers = {"Content-Type": "application/json"}
-    if HF_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt}
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.7,
+    }
 
     last_error = "Unknown error"
 
@@ -49,48 +53,47 @@ def call_mistral(prompt: str, max_new_tokens: int = 512) -> str:
         try:
             response = req.post(API_URL, headers=headers, json=payload, timeout=90)
 
-            # 503 — model is still warming up
+            # 503 — model loading
             if response.status_code == 503:
-                last_error = "Model is loading (HTTP 503)."
+                last_error = "Service unavailable (503)."
                 print(f"[{attempt}/{MAX_RETRIES}] 503 – retrying in {RETRY_DELAY}s…")
                 time.sleep(RETRY_DELAY)
                 continue
 
-            # Empty body — cold start returns nothing
+            # Empty body
             if not response.text or not response.text.strip():
-                last_error = "Empty response body (model cold-starting)."
+                last_error = "Empty response body."
                 print(f"[{attempt}/{MAX_RETRIES}] Empty body – retrying in {RETRY_DELAY}s…")
                 time.sleep(RETRY_DELAY)
                 continue
 
-            # Non-200 with body
+            # Auth errors — no point retrying
+            if response.status_code in (401, 403):
+                raise RuntimeError(
+                    "Authentication failed. Check your HF_TOKEN in Space secrets."
+                )
+
+            # Other non-200
             if response.status_code != 200:
                 last_error = f"HTTP {response.status_code}: {response.text[:200]}"
                 print(f"[{attempt}/{MAX_RETRIES}] {last_error}")
-                if response.status_code in (401, 403):
-                    break   # no point retrying auth errors
                 time.sleep(RETRY_DELAY)
                 continue
 
-            # Parse JSON
+            # Parse response
             try:
                 data = response.json()
             except ValueError:
-                last_error = f"JSON decode error. Raw: {response.text[:200]}"
+                last_error = f"JSON decode error: {response.text[:200]}"
                 print(f"[{attempt}/{MAX_RETRIES}] {last_error}")
                 time.sleep(RETRY_DELAY)
                 continue
 
-            # Extract generated text
-            if isinstance(data, list) and data:
-                text = data[0].get("generated_text", "").strip()
-            elif isinstance(data, dict):
-                text = data.get("generated_text", "").strip()
-            else:
-                text = ""
+            # Extract content from chat completions format
+            text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
             if not text:
-                last_error = "Model returned empty generated_text."
+                last_error = "Empty content in response."
                 print(f"[{attempt}/{MAX_RETRIES}] {last_error} – retrying…")
                 time.sleep(RETRY_DELAY)
                 continue
@@ -98,7 +101,7 @@ def call_mistral(prompt: str, max_new_tokens: int = 512) -> str:
             return text  # ✅ success
 
         except req.exceptions.Timeout:
-            last_error = "Request timed out after 90s."
+            last_error = "Request timed out."
             print(f"[{attempt}/{MAX_RETRIES}] Timeout – retrying…")
             time.sleep(RETRY_DELAY)
 
@@ -108,8 +111,8 @@ def call_mistral(prompt: str, max_new_tokens: int = 512) -> str:
             time.sleep(RETRY_DELAY)
 
     raise RuntimeError(
-        f"The AI model is currently loading on Hugging Face's servers. "
-        f"Please wait 20–30 seconds and try again. (Last error: {last_error})"
+        f"AI service unavailable after {MAX_RETRIES} attempts. "
+        f"Last error: {last_error}. Please try again in 30 seconds."
     )
 
 
@@ -162,18 +165,15 @@ def summarize():
     txt_path = data.get('text_file')
 
     if not txt_path or not os.path.exists(txt_path):
-        return jsonify({'error': 'Text file not found — please re-upload your PDF.'}), 400
+        return jsonify({'error': 'File not found — please re-upload your PDF.'}), 400
 
-    text   = read_text(txt_path)[:MAX_CHARS]
-    prompt = (
-        "[INST] You are a helpful study assistant. "
-        "Summarize the following text in a clear, structured way. "
-        "Use bullet points for key ideas and keep it concise.\n\n"
-        f"{text} [/INST]"
-    )
+    text = read_text(txt_path)[:MAX_CHARS]
+
+    system = "You are a helpful study assistant. Summarize documents clearly and concisely."
+    user   = f"Summarize the following text using bullet points for key ideas:\n\n{text}"
 
     try:
-        result = call_mistral(prompt, max_new_tokens=400)
+        result = call_llm(system, user, max_tokens=400)
         return jsonify({'summary': result})
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 503
@@ -186,33 +186,34 @@ def quiz():
     num_q    = int(data.get('num_questions', 5))
 
     if not txt_path or not os.path.exists(txt_path):
-        return jsonify({'error': 'Text file not found — please re-upload your PDF.'}), 400
+        return jsonify({'error': 'File not found — please re-upload your PDF.'}), 400
 
-    text   = read_text(txt_path)[:MAX_CHARS]
-    prompt = (
-        f"[INST] Create {num_q} multiple-choice questions from the text below. "
-        "Respond ONLY with a valid JSON array, no extra text, no markdown fences.\n\n"
-        "Each item:\n"
-        '{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],'
-        '"answer":"A. ...","explanation":"..."}\n\n'
-        f"Text:\n{text} [/INST]"
+    text = read_text(txt_path)[:MAX_CHARS]
+
+    system = "You are a quiz generator. You only respond with valid JSON arrays, no extra text."
+    user   = (
+        f"Create {num_q} multiple-choice questions from the text below.\n"
+        "Respond ONLY with a JSON array in this exact format, nothing else:\n"
+        '[{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],'
+        '"answer":"A. ...","explanation":"..."}]\n\n'
+        f"Text:\n{text}"
     )
 
     try:
-        raw = call_mistral(prompt, max_new_tokens=900)
+        raw = call_llm(system, user, max_tokens=1000)
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 503
 
-    # Clean markdown fences if model added them
+    # Clean markdown fences
     clean = raw.strip()
-    if clean.startswith('```'):
+    if '```' in clean:
         parts = clean.split('```')
         clean = parts[1] if len(parts) > 1 else clean
         if clean.startswith('json'):
             clean = clean[4:]
         clean = clean.strip()
 
-    # Find JSON array bounds
+    # Find JSON array
     start = clean.find('[')
     end   = clean.rfind(']')
     if start != -1 and end != -1:
@@ -223,7 +224,7 @@ def quiz():
         return jsonify({'questions': questions})
     except json.JSONDecodeError:
         return jsonify({
-            'error': 'Could not parse quiz — try regenerating.',
+            'error': 'Could not parse quiz format — try regenerating.',
             'raw': raw[:300]
         }), 500
 
@@ -235,21 +236,17 @@ def ask():
     question = data.get('question', '').strip()
 
     if not txt_path or not os.path.exists(txt_path):
-        return jsonify({'error': 'Text file not found — please re-upload your PDF.'}), 400
+        return jsonify({'error': 'File not found — please re-upload your PDF.'}), 400
     if not question:
         return jsonify({'error': 'No question provided.'}), 400
 
-    text   = read_text(txt_path)[:MAX_CHARS]
-    prompt = (
-        "[INST] You are a helpful study assistant. "
-        "Answer the question below using ONLY the provided document. "
-        "Be clear, concise and accurate.\n\n"
-        f"Document:\n{text}\n\n"
-        f"Question: {question} [/INST]"
-    )
+    text = read_text(txt_path)[:MAX_CHARS]
+
+    system = "You are a helpful study assistant. Answer questions using only the provided document text. Be clear and concise."
+    user   = f"Document:\n{text}\n\nQuestion: {question}"
 
     try:
-        answer = call_mistral(prompt, max_new_tokens=350)
+        answer = call_llm(system, user, max_tokens=350)
         return jsonify({'answer': answer})
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 503
