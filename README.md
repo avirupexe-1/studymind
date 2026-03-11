@@ -1,3 +1,16 @@
+---
+title: StudyMind AI Study Assistant
+emoji: 📚
+colorFrom: yellow
+colorTo: red
+sdk: docker
+pinned: false
+license: mit
+app_port: 7860
+---
+
+<div align="center">
+
 # 📚 StudyMind AI Study Assistant
 
 ### The definitive tool for student success
